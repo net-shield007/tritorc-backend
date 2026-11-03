@@ -13,13 +13,13 @@ const SOURCES = {
     label: 'Hydraulic Torque Wrench - India Mobile Leads',
     sheetIdEnv: 'INDIA_MOBILE_SHEET_ID',
     tabEnv: 'INDIA_MOBILE_SHEET_TAB',
-    defaultTab: 'India Leads',
+    defaultTab: 'India Mobile Leads',
   },
   'htw-gcc-mobile': {
     label: 'Hydraulic Torque Wrench - GCC Mobile Leads',
     sheetIdEnv: 'GCC_MOBILE_SHEET_ID',
     tabEnv: 'GCC_MOBILE_SHEET_TAB',
-    defaultTab: 'GCC Leads',
+    defaultTab: 'GCC Mobile Leads',
   },
 };
 
