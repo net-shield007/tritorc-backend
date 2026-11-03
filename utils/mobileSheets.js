@@ -147,23 +147,29 @@ function release(input) {
 // visitor's submission, so failures are logged with the row for manual recovery.
 async function mirrorLead(input) {
   const { source } = input;
-  if (!isEnabled()) return { skipped: 'disabled' };
-  const target = getTarget(source);
-  if (!target) {
-    console.error('Mobile sheet not configured', { source });
-    return { skipped: 'not_configured' };
-  }
-  const values = buildRow(input);
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      await appendRow(target, values);
-      return { appended: true };
-    } catch (err) {
-      if (attempt === 2) {
-        console.error('Mobile sheet append failed', { source, dbId: input.dbId, error: err.message, row: values });
-        return { error: err.message };
+  try {
+    if (!isEnabled()) return { skipped: 'disabled' };
+    const target = getTarget(source);
+    if (!target) {
+      console.error('Mobile sheet not configured', { source });
+      return { skipped: 'not_configured' };
+    }
+    const values = buildRow(input);
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await appendRow(target, values);
+        return { appended: true };
+      } catch (err) {
+        if (attempt === 2) {
+          console.error('Mobile sheet append failed', { source, dbId: input.dbId, error: err.message, row: values });
+          return { error: err.message };
+        }
       }
     }
+  } catch (err) {
+    // Nothing here may reject: the caller does not await this.
+    console.error('Mobile sheet mirror error', { source, dbId: input.dbId, error: err.message });
+    return { error: err.message };
   }
 }
 
