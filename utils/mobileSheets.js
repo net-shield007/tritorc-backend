@@ -161,7 +161,8 @@ async function mirrorLead(input) {
         return { appended: true };
       } catch (err) {
         if (attempt === 2) {
-          console.error('Mobile sheet append failed', { source, dbId: input.dbId, error: err.message, row: values });
+          // No lead details here: the row is in the database under dbId.
+          console.error('Mobile sheet append failed', { source, dbId: input.dbId, error: err.message });
           return { error: err.message };
         }
       }
