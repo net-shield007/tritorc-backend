@@ -40,6 +40,22 @@ exports.createPPCSubmission = async (req, res, next) => {
     const duplicate = mobileSheets.findDuplicate(mobileInput);
     if (duplicate) return res.status(200).json({ id: duplicate.id, duplicate: true });
     claimed = mobileSheets.claim(mobileInput);
+
+    // The in-memory check above resets on restart and is per instance, so also look for the
+    // same email + message in the last 10 minutes in the database (the message carries the page URL).
+    try {
+      const recent = await knex('ppc_contact_submissions')
+        .where('email', email)
+        .andWhere('message', message || '')
+        .andWhere('created_at', '>', new Date(Date.now() - 10 * 60 * 1000))
+        .first('id');
+      if (recent) {
+        claimed.id = recent.id;
+        return res.status(200).json({ id: recent.id, duplicate: true });
+      }
+    } catch (err) {
+      // If the lookup fails, accept the lead rather than lose it.
+    }
   }
 
   try {
