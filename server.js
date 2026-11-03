@@ -7,6 +7,9 @@ const errorHandler = require('./middleware/errorHandler');
 const knexConfig = require('./knexfile').development;
 const knex = require('knex')(knexConfig);
 
+// Fail at startup, not on the first login, if the JWT secret is missing.
+require('./utils/jwtSecret').getJwtSecret();
+
 const app = express();
 const PORT = process.env.PORT || 4000;
 
