@@ -13,13 +13,13 @@ const SOURCES = {
     label: 'Hydraulic Torque Wrench - India Mobile Leads',
     sheetIdEnv: 'INDIA_MOBILE_SHEET_ID',
     tabEnv: 'INDIA_MOBILE_SHEET_TAB',
-    defaultTab: 'India Leads',
+    defaultTab: 'India Mobile Leads',
   },
   'htw-gcc-mobile': {
     label: 'Hydraulic Torque Wrench - GCC Mobile Leads',
     sheetIdEnv: 'GCC_MOBILE_SHEET_ID',
     tabEnv: 'GCC_MOBILE_SHEET_TAB',
-    defaultTab: 'GCC Leads',
+    defaultTab: 'GCC Mobile Leads',
   },
 };
 
@@ -46,11 +46,29 @@ function getTarget(source) {
   return { sheetId, tab: process.env[cfg.tabEnv] || cfg.defaultTab, label: cfg.label };
 }
 
+// The service account comes either from GOOGLE_SERVICE_ACCOUNT_JSON (the whole key file,
+// as injected from AWS Secrets Manager) or from GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY.
+function readServiceAccount() {
+  const json = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (json) {
+    try {
+      const parsed = JSON.parse(json);
+      return { email: parsed.client_email, key: parsed.private_key };
+    } catch (err) {
+      // Never include the value in the message: it holds the private key.
+      throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON');
+    }
+  }
+  // Env vars usually carry the key with literal \n sequences.
+  return {
+    email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    key: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+  };
+}
+
 function getAuth() {
   if (!authClient) {
-    const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    // Env vars usually carry the key with literal \n sequences.
-    const key = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+    const { email, key } = readServiceAccount();
     if (!email || !key) {
       const err = new Error('Google service account is not configured');
       err.code = 'SHEETS_NOT_CONFIGURED';
@@ -174,4 +192,13 @@ async function mirrorLead(input) {
   }
 }
 
-module.exports = { SOURCES, HEADERS, getSource, findDuplicate, claim, release, mirrorLead, setAuthClient };
+// Used by the reconcile and smoke-test scripts.
+async function readColumn(target, column) {
+  const { data } = await getAuth().request({ url: `${SHEETS_API}/${target.sheetId}/values/${range(target.tab, `${column}:${column}`)}` });
+  return (data.values || []).map((r) => r[0]);
+}
+
+module.exports = {
+  SOURCES, HEADERS, getSource, getTarget, buildRow, appendRow, readColumn,
+  findDuplicate, claim, release, mirrorLead, setAuthClient,
+};

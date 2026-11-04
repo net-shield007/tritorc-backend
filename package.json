@@ -6,7 +6,9 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "migrate": "knex migrate:latest",
-    "rollback": "knex migrate:rollback"
+    "rollback": "knex migrate:rollback",
+    "sheets:smoke-test": "node scripts/sheetsSmokeTest.js",
+    "sheets:reconcile": "node scripts/reconcileMobileSheets.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
