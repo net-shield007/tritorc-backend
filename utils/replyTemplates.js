@@ -25,7 +25,7 @@ const BODIES = {
   job_seeker: {
     subject: 'Your application – Tritorc',
     paragraphs: [
-      'Thank you for your interest in working with Tritorc. This channel is for product and service enquiries, so we cannot review applications here. Please check our website for current openings.',
+      'Thank you for your interest in working with Tritorc. This channel is for product and service enquiries, so we cannot review job applications here. Please contact our HR team at hr@tritorc.com.',
     ],
   },
   supplier: {
@@ -45,6 +45,11 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// Makes addresses in (already escaped) template text clickable.
+function linkEmails(escaped) {
+  return escaped.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, (e) => `<a href="mailto:${e}">${e}</a>`);
 }
 
 // lead: { name, message } where message has the "Lead Source:" block already removed.
@@ -69,7 +74,7 @@ function renderReply(template, lead) {
 
   const html = [
     `<p>${escapeHtml(greeting)}</p>`,
-    ...body.paragraphs.map((p) => `<p>${escapeHtml(p)}</p>`),
+    ...body.paragraphs.map((p) => `<p>${linkEmails(escapeHtml(p))}</p>`),
     ...(quoted
       ? [
           '<p style="margin-bottom:4px;color:#555;">Your message:</p>',
