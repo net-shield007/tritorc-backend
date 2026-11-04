@@ -7,6 +7,7 @@ const { splitMessage } = require('../utils/messageParts');
 const { parseListQuery, applyFilters, sortColumn } = require('../utils/ppcQuery');
 const { sendMail, isValidEmail } = require('../utils/mailer');
 const { TEMPLATES, renderReply } = require('../utils/replyTemplates');
+const { getCustom } = require('../utils/templateStore');
 const mobileSheets = require('../utils/mobileSheets');
 
 // The lead-capture migration may not have been run yet when this code is deployed.
@@ -231,10 +232,11 @@ exports.sendPPCReply = async (req, res, next) => {
     }
 
     // Older rows still carry the "Lead Source:" block in the message.
-    const { subject, text, html } = renderReply(template, {
-      name: lead.name,
-      message: splitMessage(lead.message).message,
-    });
+    const { subject, text, html } = renderReply(
+      template,
+      { name: lead.name, company: lead.company, message: splitMessage(lead.message).message },
+      await getCustom(template) // wording saved in the dashboard settings, if any
+    );
     const to = lead.email.trim();
     const log = { submission_id: id, template, to_email: to, sent_by: req.user && req.user.email };
 
