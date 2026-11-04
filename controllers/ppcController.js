@@ -1,6 +1,10 @@
 const knexConfig = require('../knexfile').development;
 const knex = require('knex')(knexConfig);
-const { parseLeadSource, parseTrackingParams } = require('../utils/leadSource');
+const { parseLeadSource, parseTrackingParams, cleanCampaignId } = require('../utils/leadSource');
+const { parseLocation, appendLocation } = require('../utils/location');
+const { parseVisitor, appendVisitor } = require('../utils/visitor');
+const { splitMessage } = require('../utils/messageParts');
+const { parseListQuery, applyFilters, sortColumn } = require('../utils/ppcQuery');
 const { sendMail, isValidEmail } = require('../utils/mailer');
 const { TEMPLATES, renderReply } = require('../utils/replyTemplates');
 const mobileSheets = require('../utils/mobileSheets');
@@ -24,6 +28,7 @@ function schemaCheck(check) {
 }
 const hasLeadColumns = schemaCheck(() => knex.schema.hasColumn('ppc_contact_submissions', 'campaign_id'));
 const hasEmailLog = schemaCheck(() => knex.schema.hasTable('ppc_email_log'));
+const hasFirstContacted = schemaCheck(() => knex.schema.hasColumn('ppc_contact_submissions', 'first_contacted_at'));
 
 const clean = (value, max) => {
   if (value === undefined || value === null) return undefined;
@@ -70,7 +75,7 @@ exports.createPPCSubmission = async (req, res, next) => {
         message: parsed.message,
         country_code: clean(body.country_code, 10),
         country_name: clean(body.country_name, 100),
-        campaign_id: clean(body.campaign_id, 50) || tracking.campaign_id,
+        campaign_id: cleanCampaignId(body.campaign_id) || tracking.campaign_id,
         page_name: clean(body.page_name, 500) || parsed.source.page_name,
         page_url: pageUrl,
         referrer: clean(body.referrer, 2000) || parsed.source.referrer,
@@ -78,6 +83,16 @@ exports.createPPCSubmission = async (req, res, next) => {
         gbraid: clean(body.gbraid, 500) || tracking.gbraid,
         gad_source: clean(body.gad_source, 20) || tracking.gad_source,
       });
+    }
+
+    // Browser location (optional, no form field): saved as a block at the end of the message.
+    const visitor = parseVisitor(req.body);
+    if (visitor) row.message = appendVisitor(row.message, visitor);
+    const location = parseLocation(req.body);
+    if (location) {
+      row.message = appendLocation(row.message, location);
+      // Where the visitor is wins over the phone's country; without location the phone's country stays.
+      if (location.country && (await hasLeadColumns())) row.country_name = location.country;
     }
 
     const [id] = await knex('ppc_contact_submissions')
@@ -99,21 +114,20 @@ exports.createPPCSubmission = async (req, res, next) => {
 
 exports.getPPCSubmissions = async (req, res, next) => {
   try {
-    let { page = 1, limit = 10, orderBy = 'created_at', order = 'desc' } = req.query;
+    // Filters, sort and paging come from the query string (see utils/ppcQuery.js); bad values answer 400.
+    const parsed = parseListQuery(req.query);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const f = parsed.filters;
+    const has = { leadColumns: await hasLeadColumns(), emailLog: await hasEmailLog() };
+    const { page, limit } = f;
 
-    page = parseInt(page, 10);
-    limit = parseInt(limit, 10);
-
-    const offset = (page - 1) * limit;
-
-    const submissions = await knex('ppc_contact_submissions')
-      .select('*')
-      .where({ is_active: true })
-      .orderBy(orderBy, order)
+    const submissions = await applyFilters(knex('ppc_contact_submissions').select('ppc_contact_submissions.*'), f, has)
+      .orderBy(sortColumn(f, has), f.order)
+      .orderBy('ppc_contact_submissions.id', 'desc')
       .limit(limit)
-      .offset(offset);
+      .offset((page - 1) * limit);
 
-    const [{ count }] = await knex('ppc_contact_submissions').where({ is_active: true }).count('* as count');
+    const [{ count }] = await applyFilters(knex('ppc_contact_submissions'), f, has).count('* as count');
 
     // Replies already sent, so the admin can show a "sent" marker next to each button
     if (submissions.length && (await hasEmailLog())) {
@@ -148,15 +162,19 @@ exports.updatePPCStatus = async (req, res, next) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    const allowedStatuses = ["new", "contacted", "qualified", "hot", "closed"];
+    const allowedStatuses = ["new", "contacted", "qualified", "hot", "closed", "spam"];
 
     if (!allowedStatuses.includes(status)) {
       return res.status(400).json({ error: `Invalid status. Allowed statuses: ${allowedStatuses.join(", ")}` });
     }
 
-    const updated = await knex('ppc_contact_submissions')
-      .where({ id })
-      .update({ status, updated_at: knex.fn.now() });
+    const changes = { status, updated_at: knex.fn.now() };
+    // The first time a lead is worked on, remember when (used for the response-time numbers).
+    if (['contacted', 'qualified', 'hot'].includes(status) && (await hasFirstContacted())) {
+      changes.first_contacted_at = knex.raw('COALESCE(first_contacted_at, now())');
+    }
+
+    const updated = await knex('ppc_contact_submissions').where({ id }).update(changes);
 
     if (!updated) {
       return res.status(404).json({ error: 'Submission not found' });
@@ -215,7 +233,7 @@ exports.sendPPCReply = async (req, res, next) => {
     // Older rows still carry the "Lead Source:" block in the message.
     const { subject, text, html } = renderReply(template, {
       name: lead.name,
-      message: parseLeadSource(lead.message).message,
+      message: splitMessage(lead.message).message,
     });
     const to = lead.email.trim();
     const log = { submission_id: id, template, to_email: to, sent_by: req.user && req.user.email };
@@ -232,6 +250,14 @@ exports.sendPPCReply = async (req, res, next) => {
         return res.status(503).json({ error: 'Mail is not configured on the server' });
       }
       return res.status(502).json({ error: 'Failed to send the email' });
+    }
+
+    // The reply counts as the first contact. The mail is already sent, so a failure here is only logged.
+    if (await hasFirstContacted()) {
+      await knex('ppc_contact_submissions')
+        .where({ id })
+        .update({ first_contacted_at: knex.raw('COALESCE(first_contacted_at, now())') })
+        .catch((e) => console.error('first_contacted_at update failed', e.message));
     }
 
     // "We will help you" moves a new lead to contacted; it never downgrades a later stage.
