@@ -197,7 +197,10 @@ exports.getNewCount = async (req, res, next) => {
 
     let count = 0;
     if (since) {
-      const [row] = await visible().where('created_at', '>', iso(since)).count('* as count');
+      // Postgres keeps microseconds but "since" (a JavaScript date) only milliseconds, so the lead it came from
+      // would compare as newer than itself. Looking from one millisecond later keeps it from being counted again.
+      const after = new Date(since.getTime() + 1);
+      const [row] = await visible().where('created_at', '>', iso(after)).count('* as count');
       count = parseInt(row.count, 10);
     }
     const latest = await visible()
