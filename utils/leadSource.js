@@ -41,12 +41,29 @@ function parseLeadSource(message) {
 }
 
 // Campaign details carried in the landing URL (Google Ads).
+// Campaign ids are short plain values. An unfilled Google tracking template such as "{campaignid}"
+// (or anything with odd characters) is treated as missing.
+const CAMPAIGN_PARAMS = ['gad_campaignid', 'campaignid', 'campaign_id'];
+
+function cleanCampaignId(value) {
+  const v = String(value === undefined || value === null ? '' : value).trim();
+  return /^[A-Za-z0-9_.-]{1,50}$/.test(v) ? v : undefined;
+}
+
+function campaignFromParams(params) {
+  for (const name of CAMPAIGN_PARAMS) {
+    const id = cleanCampaignId(params.get(name));
+    if (id) return id;
+  }
+  return undefined;
+}
+
 function parseTrackingParams(url) {
   if (!url) return {};
   try {
     const params = new URL(url).searchParams;
     return {
-      campaign_id: params.get('gad_campaignid') || undefined,
+      campaign_id: campaignFromParams(params),
       gclid: params.get('gclid') || undefined,
       gbraid: params.get('gbraid') || undefined,
       gad_source: params.get('gad_source') || undefined,
@@ -56,4 +73,4 @@ function parseTrackingParams(url) {
   }
 }
 
-module.exports = { parseLeadSource, parseTrackingParams };
+module.exports = { parseLeadSource, parseTrackingParams, cleanCampaignId };
