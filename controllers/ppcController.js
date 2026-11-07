@@ -333,11 +333,12 @@ exports.translatePPCMessage = async (req, res, next) => {
 
     const text = splitMessage(lead.message).message;
     try {
-      const { translated, detectedLanguage, truncated } = await translateToEnglish(text);
+      const { translated, detectedLanguage, unknownLanguage, truncated } = await translateToEnglish(text);
       return res.status(200).json({
         translated,
         detected_language: detectedLanguage,
-        already_english: translated === null,
+        already_english: translated === null && !unknownLanguage,
+        unknown_language: unknownLanguage,
         truncated,
       });
     } catch (err) {

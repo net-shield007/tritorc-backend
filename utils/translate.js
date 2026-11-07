@@ -70,12 +70,22 @@ function classify(err) {
   return codeError('TRANSLATE_FAILED', reason || 'The translation service failed');
 }
 
-// Returns { translated, detectedLanguage, truncated }. `translated` is null when the text is already English.
+// Cuts to at most `max` characters without splitting a character that JavaScript stores as two units
+// (emoji, some Chinese and Arabic-script characters), which would send Google a broken character.
+function cutText(text, max) {
+  if (text.length <= max) return { text, cut: false };
+  const chars = Array.from(text.slice(0, max * 2)); // by whole characters; one character is at most 2 units
+  const kept = chars.length > max ? chars.slice(0, max) : chars;
+  return { text: kept.join(''), cut: kept.join('').length < text.length };
+}
+
+// Returns { translated, detectedLanguage, unknownLanguage, truncated }.
+// `translated` is null when the text is already English, or when Google could not tell what language it is
+// (unknownLanguage: very short text, numbers only, or a made-up word) and so had nothing to translate.
 async function translateToEnglish(text) {
   const source = String(text || '').trim();
   if (!source) throw codeError('TRANSLATE_EMPTY', 'There is no message to translate');
-  const truncated = source.length > MAX_CHARS;
-  const q = truncated ? source.slice(0, MAX_CHARS) : source;
+  const { text: q, cut: truncated } = cutText(source, MAX_CHARS);
 
   const key = crypto.createHash('sha256').update(q).digest('hex');
   const hit = cache.get(key);
@@ -98,11 +108,14 @@ async function translateToEnglish(text) {
 
   const detectedLanguage = item.detectedSourceLanguage || null;
   const alreadyEnglish = !!detectedLanguage && /^en(-|$)/i.test(detectedLanguage);
-  const result = { translated: alreadyEnglish ? null : item.translatedText, detectedLanguage };
+  // Google answers "und" (undetermined) when it cannot tell the language, and hands the text back unchanged.
+  const undetermined = !detectedLanguage || detectedLanguage.toLowerCase() === 'und';
+  const unknownLanguage = undetermined && item.translatedText.trim() === q.trim();
+  const result = { translated: alreadyEnglish || unknownLanguage ? null : item.translatedText, detectedLanguage, unknownLanguage };
 
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value); // oldest first
   cache.set(key, result);
   return { ...result, truncated };
 }
 
-module.exports = { translateToEnglish, setAuthClient, MAX_CHARS };
+module.exports = { translateToEnglish, cutText, setAuthClient, MAX_CHARS };

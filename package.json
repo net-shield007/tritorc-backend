@@ -8,7 +8,8 @@
     "migrate": "knex migrate:latest",
     "rollback": "knex migrate:rollback",
     "sheets:smoke-test": "node scripts/sheetsSmokeTest.js",
-    "sheets:reconcile": "node scripts/reconcileMobileSheets.js"
+    "sheets:reconcile": "node scripts/reconcileMobileSheets.js",
+    "translate:smoke-test": "node scripts/translateSmokeTest.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
