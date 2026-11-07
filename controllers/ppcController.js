@@ -8,7 +8,9 @@ const { parseListQuery, applyFilters, sortColumn } = require('../utils/ppcQuery'
 const { sendMail, isValidEmail } = require('../utils/mailer');
 const { TEMPLATES, renderReply } = require('../utils/replyTemplates');
 const { getCustom } = require('../utils/templateStore');
+const { translateToEnglish } = require('../utils/translate');
 const mobileSheets = require('../utils/mobileSheets');
+const { ipCountryCode } = require('../utils/ipCountry');
 
 // The lead-capture migration may not have been run yet when this code is deployed.
 // Remember whether the new columns / log table exist, rechecking a missing one at most once a minute.
@@ -29,6 +31,7 @@ function schemaCheck(check) {
 }
 const hasLeadColumns = schemaCheck(() => knex.schema.hasColumn('ppc_contact_submissions', 'campaign_id'));
 const hasEmailLog = schemaCheck(() => knex.schema.hasTable('ppc_email_log'));
+const hasIpCountry = schemaCheck(() => knex.schema.hasColumn('ppc_contact_submissions', 'ip_country_code'));
 const hasFirstContacted = schemaCheck(() => knex.schema.hasColumn('ppc_contact_submissions', 'first_contacted_at'));
 
 const clean = (value, max) => {
@@ -123,6 +126,10 @@ exports.createPPCSubmission = async (req, res, next) => {
       // Where the visitor is wins over the phone's country; without location the phone's country stays.
       if (location.country && (await hasLeadColumns())) row.country_name = location.country;
     }
+
+    // Country of the request (proxy header, no IP stored): the map's fallback when there is no GPS.
+    const ipCountry = ipCountryCode(req);
+    if (ipCountry && (await hasIpCountry())) row.ip_country_code = ipCountry;
 
     const [id] = await knex('ppc_contact_submissions')
       .insert(row)
@@ -302,5 +309,44 @@ exports.sendPPCReply = async (req, res, next) => {
     next(err);
   } finally {
     replyInFlight.delete(key);
+  }
+};
+
+// POST /api/ppc/:id/translate : the lead's message in English, translated by Google when someone asks.
+// Only what the visitor wrote is sent (the source, location and visitor blocks are removed first).
+const TRANSLATE_ERRORS = {
+  TRANSLATE_EMPTY: [400, 'This lead has no message to translate'],
+  TRANSLATE_NOT_CONFIGURED: [503, 'Translation is not set up on the server'],
+  TRANSLATE_DENIED: [502, 'Google refused the translation. Check that the Cloud Translation API is enabled and the service account has the Cloud Translation API User role'],
+  TRANSLATE_QUOTA: [429, 'The translation quota is used up. Try again later'],
+  TRANSLATE_TIMEOUT: [504, 'The translation service took too long. Please try again'],
+  TRANSLATE_FAILED: [502, 'The translation service failed. Please try again'],
+};
+
+exports.translatePPCMessage = async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
+
+  try {
+    const lead = await knex('ppc_contact_submissions').where({ id, is_active: true }).first();
+    if (!lead) return res.status(404).json({ error: 'Submission not found' });
+
+    const text = splitMessage(lead.message).message;
+    try {
+      const { translated, detectedLanguage, truncated } = await translateToEnglish(text);
+      return res.status(200).json({
+        translated,
+        detected_language: detectedLanguage,
+        already_english: translated === null,
+        truncated,
+      });
+    } catch (err) {
+      const mapped = TRANSLATE_ERRORS[err.code];
+      if (!mapped) throw err;
+      if (err.code !== 'TRANSLATE_EMPTY') console.error('PPC translate failed', { id, code: err.code }); // never the message text or the Google reply
+      return res.status(mapped[0]).json({ error: mapped[1] });
+    }
+  } catch (err) {
+    next(err);
   }
 };

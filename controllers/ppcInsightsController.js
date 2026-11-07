@@ -17,6 +17,7 @@ const COUNTED_STATUSES = ['new', 'contacted', 'qualified', 'hot', 'closed'];
 const hasLeadColumns = schemaCheck(() => knex.schema.hasColumn(TABLE, 'campaign_id'));
 const hasEmailLog = schemaCheck(() => knex.schema.hasTable('ppc_email_log'));
 const hasFirstContacted = schemaCheck(() => knex.schema.hasColumn(TABLE, 'first_contacted_at'));
+const hasIpCountry = schemaCheck(() => knex.schema.hasColumn(TABLE, 'ip_country_code'));
 
 // created_at is a timestamp without time zone stored in UTC, so compare using UTC text.
 const iso = (d) => d.toISOString();
@@ -294,7 +295,9 @@ exports.getMapPoints = async (req, res, next) => {
     const has = { leadColumns: await hasLeadColumns(), emailLog: await hasEmailLog() };
 
     const columns = [`${TABLE}.id`, 'name', 'email', 'company', 'status', `${TABLE}.created_at`, 'message'];
-    if (has.leadColumns) columns.push('country_name');
+    if (has.leadColumns) columns.push('country_name', 'country_code');
+    const ipColumn = await hasIpCountry();
+    if (ipColumn) columns.push('ip_country_code');
 
     const rows = await applyFilters(knex(TABLE).select(columns), f, has)
       .orderBy(`${TABLE}.created_at`, 'desc')
@@ -302,9 +305,23 @@ exports.getMapPoints = async (req, res, next) => {
       .limit(MAP_SCAN_LIMIT);
 
     const points = [];
+    // Leads with no GPS fall back to a country: where the request came from, else the phone's country.
+    const byCountry = new Map();
     for (const r of rows) {
       const { location } = splitLocation(r.message);
-      if (!location || location.latitude === undefined) continue;
+      if (!location || location.latitude === undefined) {
+        const code = String(r.ip_country_code || r.country_code || '').toUpperCase();
+        if (/^[A-Z]{2}$/.test(code)) {
+          const entry = byCountry.get(code) || { code, name: null, count: 0, leads: [] };
+          entry.count += 1;
+          if (!entry.name && r.country_name) entry.name = r.country_name;
+          if (entry.leads.length < 20) {
+            entry.leads.push({ id: r.id, name: r.name, email: r.email, status: r.status, created_at: r.created_at });
+          }
+          byCountry.set(code, entry);
+        }
+        continue;
+      }
       points.push({
         id: r.id,
         name: r.name,
@@ -322,7 +339,15 @@ exports.getMapPoints = async (req, res, next) => {
       });
     }
 
-    res.json({ points, scanned: rows.length, withLocation: points.length, truncated: rows.length === MAP_SCAN_LIMIT });
+    const countries = [...byCountry.values()].sort((a, b) => b.count - a.count);
+    res.json({
+      points,
+      countries,
+      scanned: rows.length,
+      withLocation: points.length,
+      countryOnly: countries.reduce((n, c) => n + c.count, 0),
+      truncated: rows.length === MAP_SCAN_LIMIT,
+    });
   } catch (err) {
     next(err);
   }

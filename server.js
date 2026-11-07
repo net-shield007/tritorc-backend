@@ -13,6 +13,9 @@ require('./utils/jwtSecret').getJwtSecret();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Behind App Runner / Cloudflare: lets req.ip and forwarded headers reflect the real client.
+app.set('trust proxy', true);
+
 // Middleware
 app.use(cors());
 app.use(bodyParser.json({ limit: '100mb' }));
@@ -26,6 +29,7 @@ app.use('/api/distribution', require('./routes/distribution'));
 app.use('/api/contact', require('./routes/contact'));
 app.use('/api/product', require('./routes/product'));
 app.use('/api/ppc', require('./routes/ppc'));
+app.use('/api/visit', require('./routes/visit'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/blog', require('./routes/blog'));
 

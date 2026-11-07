@@ -19,5 +19,6 @@ router.delete('/templates/:template', auth, authorize(['superadmin', 'admin']), 
 router.get('/export', auth, authorize(['superadmin', 'admin', 'editor']), insights.exportCsv);
 router.patch('/:id/status', auth, authorize(['superadmin', 'admin', 'editor']), ppcController.updatePPCStatus);
 router.post('/:id/reply', auth, authorize(['superadmin', 'admin', 'editor']), ppcController.sendPPCReply);
+router.post('/:id/translate', auth, authorize(['superadmin', 'admin', 'editor']), ppcController.translatePPCMessage);
 
 module.exports = router;
